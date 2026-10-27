@@ -1,0 +1,132 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      runtime_version:
+        description: "Foundry Local runtime version (blank = latest stable on NuGet)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-x64
+            lib_glob: "*.dll"
+            exe: tutor-test.exe
+          - os: macos-15
+            name: mac-arm64
+            lib_glob: "*.dylib"
+            exe: tutor-test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+      # Windows: build the C runtime into the program so it doesn't depend on it being installed.
+      RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Pick the Foundry Local runtime version
+        run: |
+          set -euo pipefail
+          version="${{ github.event.inputs.runtime_version }}"
+          if [ -z "$version" ]; then
+            version=$(curl -fsSL https://api.nuget.org/v3-flatcontainer/microsoft.ai.foundry.local.runtime/index.json \
+              | python3 -c 'import json,sys; v=[x for x in json.load(sys.stdin)["versions"] if "-" not in x]; print(v[-1])')
+          fi
+          echo "Foundry Local runtime $version"
+          echo "FOUNDRY_LOCAL_RUNTIME_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Lint
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+
+      - name: Unit tests
+        run: cargo test
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          out_dir=$(ls -d target/release/build/foundry-local-sdk-*/out | head -1)
+          pkg="dist/tutor-test-${{ matrix.name }}"
+          mkdir -p "$pkg"
+          cp "target/release/${{ matrix.exe }}" "$pkg/"
+          shopt -s nullglob
+          libs=("$out_dir"/${{ matrix.lib_glob }})
+          if [ ${#libs[@]} -eq 0 ]; then echo "No engine libraries found in $out_dir"; ls -la "$out_dir"; exit 1; fi
+          cp "${libs[@]}" "$pkg/"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            # Microsoft Visual C++ runtime for the engine's own DLLs (app-local copy).
+            for dll in vcruntime140.dll vcruntime140_1.dll msvcp140.dll; do
+              cp "/c/Windows/System32/$dll" "$pkg/" || echo "warning: $dll not found"
+            done
+          fi
+          cp docs/HOW-TO-RUN.txt "$pkg/"
+          echo "Foundry Local runtime ${FOUNDRY_LOCAL_RUNTIME_VERSION}" > "$pkg/VERSIONS.txt"
+          echo "Tutor test $(grep -m1 '^version' Cargo.toml | cut -d'"' -f2), commit ${GITHUB_SHA::7}" >> "$pkg/VERSIONS.txt"
+          ls -la "$pkg"
+          echo "PKG=$pkg" >> "$GITHUB_ENV"
+
+      - name: List the model catalog
+        run: |
+          "$PKG/${{ matrix.exe }}" --list < /dev/null | tee catalog.txt
+
+      - name: End-to-end run with the smallest model
+        run: |
+          set -euo pipefail
+          "$PKG/${{ matrix.exe }}" --models qwen2.5-0.5b --cases 3 --no-open --cleanup --out smoke < /dev/null
+          report=$(ls -d smoke/tutor-test-*/ | head -1)
+          python3 - "$report/results.json" <<'EOF'
+          import json, sys
+          run = json.load(open(sys.argv[1]))
+          print("accelerators:", run["accelerators"])
+          for m in run["models"]:
+              print(m["alias"], m["variant"], m["device"], m["execution_provider"], "error:", m["error"])
+              for h in m["hints"]:
+                  print(f'  {h["case_id"]}: {h["total_s"]:.1f}s tokens={h["tokens"]} error={h["error"]}')
+                  print("   ", (h["text"] or "")[:200].replace("\n", " "))
+          answered = sum(1 for m in run["models"] for h in m["hints"] if not h["error"])
+          if answered == 0:
+              sys.exit("No hints were answered")
+          EOF
+          cp "$report/report.html" smoke-report.html
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tutor-test-${{ matrix.name }}
+          path: ${{ env.PKG }}
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-report-${{ matrix.name }}
+          path: |
+            smoke-report.html
+            catalog.txt
+          if-no-files-found: ignore
+          retention-days: 14

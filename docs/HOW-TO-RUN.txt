@@ -1,0 +1,38 @@
+TUTOR TEST - how to run it
+==========================
+
+What it does
+  Tries small AI models on this computer and measures how fast and how well
+  they explain common beginner Python mistakes. Nothing is sent anywhere:
+  the models run on this computer. At the end it opens a report in your browser.
+
+Before you start
+  - About 6 GB of free disk space (the models are downloaded once).
+  - A good internet connection for the downloads.
+  - Plug in the laptop: the test keeps the processor busy for a while.
+  - Allow 30 to 60 minutes. You can leave it running.
+
+Windows
+  1. Right-click the zip file and choose "Extract All...". Keep every file
+     together in the same folder.
+  2. Open the folder and double-click tutor-test.exe.
+  3. If Windows shows "Windows protected your PC", click "More info",
+     then "Run anyway". (This appears once because the program isn't from
+     the Microsoft Store.)
+  4. A black window shows progress. When it's done, the report opens in
+     your browser and the window asks whether to delete the downloaded
+     models. Type y and press Enter to free the disk space, or just press
+     Enter to keep them.
+  5. Send the folder named "reports" (next to the program) back to Andy.
+
+Mac (Terminal)
+  cd into the unzipped folder, then:
+    xattr -dr com.apple.quarantine .
+    ./tutor-test
+
+To stop early press Ctrl+C. A report of what finished is still written.
+
+Options (for Andy): run with --help to see them, e.g.
+  tutor-test --with-7b          also try the bigger 7B coding model
+  tutor-test --all-variants     try both the processor and graphics versions
+  tutor-test --list             show every model in the catalog

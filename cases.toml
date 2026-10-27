@@ -1,0 +1,299 @@
+# Beginner mistakes the tutor is tested on.
+#
+# Each case is what the app would hand the tutor: the lesson, the exercise,
+# the learner's code and what running it printed. `mentions` lists words a
+# useful hint is likely to contain (any one counts). `giveaway` is the fixed
+# line: a hint that contains it has handed over the answer instead of a nudge.
+
+[[case]]
+id = "missing-colon"
+title = "Missing colon after if"
+lesson = "Making decisions with if"
+task = "Print \"Hot day!\" when the temperature is above 30."
+code = '''
+temperature = 34
+if temperature > 30
+    print("Hot day!")
+'''
+output = '''
+  File "main.py", line 2
+    if temperature > 30
+                       ^
+SyntaxError: expected ':'
+'''
+mentions = ["colon"]
+giveaway = "if temperature > 30:"
+
+[[case]]
+id = "indentation"
+title = "Loop body not indented"
+lesson = "Repeating with for loops"
+task = "Print each fruit in the list on its own line."
+code = '''
+fruits = ["apple", "pear", "plum"]
+for fruit in fruits:
+print(fruit)
+'''
+output = '''
+  File "main.py", line 3
+    print(fruit)
+    ^^^^^
+IndentationError: expected an indented block after 'for' statement on line 2
+'''
+mentions = ["indent", "space", "inside"]
+giveaway = "    print(fruit)"
+
+[[case]]
+id = "assign-vs-compare"
+title = "= instead of =="
+lesson = "Making decisions with if"
+task = "Print \"Welcome back!\" when the name is \"Rose\"."
+code = '''
+name = "Rose"
+if name = "Rose":
+    print("Welcome back!")
+'''
+output = '''
+  File "main.py", line 2
+    if name = "Rose":
+       ^^^^^^^^^^^^^
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?
+'''
+mentions = ["==", "compare", "comparison", "equal"]
+giveaway = "if name == \"Rose\":"
+
+[[case]]
+id = "str-plus-int"
+title = "Joining text and a number"
+lesson = "Text and numbers together"
+task = "Print \"You are 72 years old\" using the age variable."
+code = '''
+age = 72
+print("You are " + age + " years old")
+'''
+output = '''
+Traceback (most recent call last):
+  File "main.py", line 2, in <module>
+    print("You are " + age + " years old")
+          ~~~~~~~~~~~^~~~~
+TypeError: can only concatenate str (not "int") to str
+'''
+mentions = ["str(", "f-string", "f\"", "text", "string", "number"]
+giveaway = "print(\"You are \" + str(age) + \" years old\")"
+
+[[case]]
+id = "input-is-text"
+title = "input() gives text, not a number"
+lesson = "Asking the user with input()"
+task = "Ask for two numbers and print their sum. With 5 and 3 it should print 8."
+code = '''
+a = input("First number: ")
+b = input("Second number: ")
+print(a + b)
+'''
+output = '''
+First number: 5
+Second number: 3
+53
+
+Check failed: expected 8, got 53
+'''
+mentions = ["int(", "text", "string", "number", "convert"]
+giveaway = "a = int(input("
+
+[[case]]
+id = "name-case"
+title = "Capital letter in a variable name"
+lesson = "Variables"
+task = "Store your name and print a greeting with it."
+code = '''
+name = "Margaret"
+print("Hello, " + Name)
+'''
+output = '''
+Traceback (most recent call last):
+  File "main.py", line 2, in <module>
+    print("Hello, " + Name)
+                      ^^^^
+NameError: name 'Name' is not defined. Did you mean: 'name'?
+'''
+mentions = ["capital", "lowercase", "upper", "case", "spell"]
+giveaway = "print(\"Hello, \" + name)"
+
+[[case]]
+id = "unclosed-quote"
+title = "Text without a closing quote"
+lesson = "Printing text"
+task = "Print the line: Good morning!"
+code = '''
+print("Good morning!)
+'''
+output = '''
+  File "main.py", line 1
+    print("Good morning!)
+          ^
+SyntaxError: unterminated string literal (detected at line 1)
+'''
+mentions = ["quote", "\""]
+giveaway = "print(\"Good morning!\")"
+
+[[case]]
+id = "print-no-parens"
+title = "print without parentheses"
+lesson = "Printing text"
+task = "Print the word Python."
+code = '''
+print "Python"
+'''
+output = '''
+  File "main.py", line 1
+    print "Python"
+    ^^^^^^^^^^^^^^
+SyntaxError: Missing parentheses in call to 'print'. Did you mean print(...)?
+'''
+mentions = ["parenthes", "bracket", "("]
+giveaway = "print(\"Python\")"
+
+[[case]]
+id = "range-off-by-one"
+title = "range() stops one short"
+lesson = "Repeating with for loops"
+task = "Print the numbers 1 to 10."
+code = '''
+for n in range(1, 10):
+    print(n)
+'''
+output = '''
+1
+2
+3
+4
+5
+6
+7
+8
+9
+
+Check failed: the last number printed should be 10, got 9
+'''
+mentions = ["stop", "before", "up to", "11", "end", "not included", "excludes"]
+giveaway = "range(1, 11)"
+
+[[case]]
+id = "print-not-return"
+title = "Function prints instead of returning"
+lesson = "Writing your own functions"
+task = "Write double(n) that gives back n times 2, so double(4) is 8."
+code = '''
+def double(n):
+    print(n * 2)
+
+result = double(4)
+print("Result:", result)
+'''
+output = '''
+8
+Result: None
+
+Check failed: double(4) should return 8, got None
+'''
+mentions = ["return"]
+giveaway = "return n * 2"
+
+[[case]]
+id = "index-len"
+title = "Index one past the end"
+lesson = "Lists"
+task = "Print the last colour in the list."
+code = '''
+colours = ["red", "green", "blue"]
+print(colours[len(colours)])
+'''
+output = '''
+Traceback (most recent call last):
+  File "main.py", line 2, in <module>
+    print(colours[len(colours)])
+          ~~~~~~~^^^^^^^^^^^^^^
+IndexError: list index out of range
+'''
+mentions = ["0", "zero", "start", "-1", "minus"]
+giveaway = "colours[-1]"
+
+[[case]]
+id = "endless-loop"
+title = "while loop that never ends"
+lesson = "Repeating with while loops"
+task = "Count down from 5 to 1, then print \"Lift off!\"."
+code = '''
+count = 5
+while count > 0:
+    print(count)
+print("Lift off!")
+'''
+output = '''
+5
+5
+5
+5
+5
+(the same number kept printing)
+
+Stopped: the program ran for more than 5 seconds
+'''
+mentions = ["change", "smaller", "decrease", "count -", "-= 1", "never", "forever"]
+giveaway = "count -= 1"
+
+[[case]]
+id = "dict-key-case"
+title = "Dictionary key spelled differently"
+lesson = "Dictionaries"
+task = "Print the phone number stored for Ann."
+code = '''
+phones = {"Ann": "555-0101", "Bob": "555-0102"}
+print(phones["ann"])
+'''
+output = '''
+Traceback (most recent call last):
+  File "main.py", line 2, in <module>
+    print(phones["ann"])
+          ~~~~~~^^^^^^^
+KeyError: 'ann'
+'''
+mentions = ["capital", "case", "exact", "\"Ann\"", "match"]
+giveaway = "phones[\"Ann\"]"
+
+[[case]]
+id = "upper-not-saved"
+title = "Result of upper() thrown away"
+lesson = "Working with text"
+task = "Turn the name into capital letters and print it."
+code = '''
+name = "rose"
+name.upper()
+print(name)
+'''
+output = '''
+rose
+
+Check failed: expected ROSE, got rose
+'''
+mentions = ["new", "store", "save", "assign", "change the original", "doesn't change", "does not change"]
+giveaway = "name = name.upper()"
+
+[[case]]
+id = "fstring-missing-f"
+title = "Building HTML: f missing before the string"
+lesson = "Making a web page with Python"
+task = "Build a heading tag from the title variable. It should be <h1>My Garden</h1>."
+code = '''
+title = "My Garden"
+html = "<h1>{title}</h1>"
+print(html)
+'''
+output = '''
+<h1>{title}</h1>
+
+Check failed: expected <h1>My Garden</h1>, got <h1>{title}</h1>
+'''
+mentions = ["f-string", "f\"", "f before", "letter f", "prefix"]
+giveaway = "html = f\"<h1>{title}</h1>\""
