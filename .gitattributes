@@ -1,0 +1,2 @@
+# Keep LF everywhere so cases.toml (built into the program) reads the same on Windows.
+* text=auto eol=lf

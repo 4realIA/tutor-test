@@ -44,7 +44,8 @@ pub fn built_in() -> Result<Vec<Case>> {
 }
 
 pub fn parse(text: &str) -> Result<Vec<Case>> {
-    let file: CaseFile = toml::from_str(text)?;
+    // A checkout with Windows line endings must give the same cases.
+    let file: CaseFile = toml::from_str(&text.replace("\r\n", "\n"))?;
     validate(&file.cases)?;
     Ok(file.cases)
 }
@@ -122,6 +123,18 @@ mentions = ["m"]
 giveaway = "g"
 "#;
         assert!(parse(text).unwrap_err().to_string().contains("empty code"));
+    }
+
+    #[test]
+    fn windows_line_endings_give_the_same_cases() {
+        let crlf = BUILT_IN.replace('\n', "\r\n");
+        let a = parse(BUILT_IN).unwrap();
+        let b = parse(&crlf).unwrap();
+        assert!(
+            a.iter()
+                .zip(&b)
+                .all(|(x, y)| x.code == y.code && x.output == y.output)
+        );
     }
 
     #[test]

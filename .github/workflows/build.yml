@@ -38,7 +38,7 @@ jobs:
       # Windows: build the C runtime into the program so it doesn't depend on it being installed.
       RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -63,7 +63,15 @@ jobs:
           cargo clippy --all-targets -- -D warnings
 
       - name: Unit tests
-        run: cargo test
+        run: |
+          set -o pipefail
+          if ! cargo test 2>&1 | tee test.log; then
+            # Surface failures as annotations (readable without the full log).
+            grep -E "panicked|FAILED|assertion|left:|right:|error" test.log | head -20 | while IFS= read -r line; do
+              echo "::error title=Unit test::$line"
+            done
+            exit 1
+          fi
 
       - name: Build
         run: cargo build --release
@@ -115,13 +123,13 @@ jobs:
           EOF
           cp "$report/report.html" smoke-report.html
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: tutor-test-${{ matrix.name }}
           path: ${{ env.PKG }}
           retention-days: 30
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: smoke-report-${{ matrix.name }}

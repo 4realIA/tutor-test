@@ -55,14 +55,34 @@ fn gpus() -> Vec<String> {
 
 /// Free space on the disk holding `path`, in bytes.
 pub fn free_space(path: &Path) -> Option<u64> {
-    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let path = plain_path(std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()));
     let disks = Disks::new_with_refreshed_list();
+    let lower = |p: &Path| p.to_string_lossy().to_lowercase();
     disks
         .list()
         .iter()
-        .filter(|d| path.starts_with(d.mount_point()))
+        .filter(|d| {
+            // Windows drive letters compare case-insensitively.
+            if cfg!(windows) {
+                lower(&path).starts_with(&lower(d.mount_point()))
+            } else {
+                path.starts_with(d.mount_point())
+            }
+        })
         .max_by_key(|d| d.mount_point().as_os_str().len())
         .map(|d| d.available_space())
+}
+
+/// Windows `canonicalize` returns `\\?\C:\...`; disks are listed as `C:\`.
+fn plain_path(path: PathBuf) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        path
+    }
 }
 
 /// The user's home folder.
@@ -90,6 +110,22 @@ mod tests {
         assert!(m.cores > 0);
         assert!(m.ram_gb > 0.0);
         assert!(!m.os.is_empty());
+    }
+
+    #[test]
+    fn plain_path_strips_windows_prefix() {
+        assert_eq!(
+            plain_path(PathBuf::from(r"\\?\C:\Users\a")),
+            PathBuf::from(r"C:\Users\a")
+        );
+        assert_eq!(
+            plain_path(PathBuf::from(r"\\?\UNC\srv\share")),
+            PathBuf::from(r"\\srv\share")
+        );
+        assert_eq!(
+            plain_path(PathBuf::from("/home/a")),
+            PathBuf::from("/home/a")
+        );
     }
 
     #[test]
