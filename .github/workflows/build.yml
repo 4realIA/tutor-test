@@ -109,10 +109,23 @@ jobs:
 
       - name: End-to-end run with the smallest models
         run: |
-          set -euo pipefail
-          "$PKG/${{ matrix.exe }}" --models qwen2.5-0.5b,qwen3-0.6b --cases 3 --no-open --cleanup --out smoke < /dev/null
-          report=$(ls -d smoke/tutor-test-*/ | head -1)
-          python3 - "$report/results.json" <<'EOF'
+          set -uo pipefail
+          failed=0
+          for model in qwen2.5-0.5b qwen3-0.6b; do
+            "$PKG/${{ matrix.exe }}" --models "$model" --cases 3 --no-open --cleanup --out "smoke/$model" < /dev/null > "run-$model.log" 2>&1
+            code=$?
+            cat "run-$model.log"
+            if [ $code -ne 0 ]; then
+              failed=1
+              echo "::error title=$model exited with $code::see the following annotations for its last output"
+              tail -n 15 "run-$model.log" | tr -d '\r' | while IFS= read -r line; do
+                [ -n "$line" ] && echo "::error title=$model output::$line"
+              done
+            fi
+          done
+          set -e
+          for report in smoke/*/tutor-test-*/; do
+            python3 - "$report/results.json" <<'EOF'
           import json, sys
           run = json.load(open(sys.argv[1]))
           def notice(title, msg):
@@ -133,7 +146,9 @@ jobs:
           if answered == 0:
               sys.exit("No hints were answered")
           EOF
-          cp "$report/report.html" smoke-report.html
+            cp "$report/report.html" "smoke-report-$(basename "$(dirname "$report")").html"
+          done
+          exit $failed
 
       - uses: actions/upload-artifact@v5
         with:
@@ -146,7 +161,8 @@ jobs:
         with:
           name: smoke-report-${{ matrix.name }}
           path: |
-            smoke-report.html
+            smoke-report-*.html
+            run-*.log
             catalog.txt
           if-no-files-found: ignore
           retention-days: 14
