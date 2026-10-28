@@ -31,9 +31,27 @@ pub struct HintResult {
     pub tokens: u64,
     pub checks: Option<Checks>,
     pub error: Option<String>,
+    /// When the first hint gave the answer away, it is kept here and `text`
+    /// holds the rewrite the app would show instead.
+    pub first_text: Option<String>,
+    pub first_checks: Option<Checks>,
+    /// Extra time the rewrite took (on top of `total_s`).
+    pub rewrite_s: Option<f64>,
+    pub rewrite_error: Option<String>,
+    /// Words the model "thought" before the first hint (time counted in total_s).
+    pub thinking_words: u64,
 }
 
 impl HintResult {
+    pub fn rewritten(&self) -> bool {
+        self.first_text.is_some()
+    }
+
+    /// Time until the learner sees the hint they'd actually get.
+    pub fn shown_after_s(&self) -> f64 {
+        self.total_s + self.rewrite_s.unwrap_or(0.0)
+    }
+
     pub fn ok(&self) -> bool {
         self.error.is_none()
     }
@@ -63,9 +81,14 @@ pub struct ModelRun {
 pub struct Summary {
     pub answered: usize,
     pub failed: usize,
+    /// Hints passing the checks as the learner would see them (after any rewrite).
     pub passed_checks: usize,
+    /// Hints passing the checks on the first try.
+    pub passed_first: usize,
+    pub rewrites: usize,
     pub median_first_token_s: Option<f64>,
     pub median_total_s: Option<f64>,
+    /// Slowest wait for the hint the learner sees, including any rewrite.
     pub slowest_total_s: Option<f64>,
     pub median_tokens_per_s: Option<f64>,
 }
@@ -89,6 +112,7 @@ impl ModelRun {
         let ok: Vec<&HintResult> = self.hints.iter().filter(|h| h.ok()).collect();
         let mut first: Vec<f64> = ok.iter().filter_map(|h| h.first_token_s).collect();
         let mut total: Vec<f64> = ok.iter().map(|h| h.total_s).collect();
+        let shown: Vec<f64> = ok.iter().map(|h| h.shown_after_s()).collect();
         let mut tps: Vec<f64> = ok.iter().filter_map(|h| h.tokens_per_s()).collect();
         Summary {
             answered: ok.len(),
@@ -97,9 +121,19 @@ impl ModelRun {
                 .iter()
                 .filter(|h| h.checks.as_ref().is_some_and(Checks::passed))
                 .count(),
+            passed_first: ok
+                .iter()
+                .filter(|h| {
+                    h.first_checks
+                        .as_ref()
+                        .or(h.checks.as_ref())
+                        .is_some_and(Checks::passed)
+                })
+                .count(),
+            rewrites: ok.iter().filter(|h| h.rewritten()).count(),
             median_first_token_s: median(&mut first),
             median_total_s: median(&mut total),
-            slowest_total_s: total.iter().copied().reduce(f64::max),
+            slowest_total_s: shown.iter().copied().reduce(f64::max),
             median_tokens_per_s: median(&mut tps),
         }
     }
@@ -130,6 +164,11 @@ mod tests {
             tokens,
             checks: None,
             error: error.then(|| "boom".into()),
+            first_text: None,
+            first_checks: None,
+            rewrite_s: None,
+            rewrite_error: None,
+            thinking_words: 0,
         }
     }
 
@@ -173,5 +212,48 @@ mod tests {
         assert_eq!(s.median_total_s, Some(6.0));
         assert_eq!(s.slowest_total_s, Some(9.0));
         assert_eq!(s.median_first_token_s, Some(2.0));
+        assert_eq!(s.rewrites, 0);
+    }
+
+    #[test]
+    fn rewrite_counts_and_adds_to_the_wait() {
+        let good = Checks {
+            on_topic: true,
+            gave_answer: false,
+            code_block: false,
+            words: 30,
+            too_long: false,
+        };
+        let bad = Checks {
+            gave_answer: true,
+            ..good.clone()
+        };
+        let mut h = hint(Some(1.0), 4.0, 30, false);
+        h.first_text = Some("use `x == 1`".into());
+        h.first_checks = Some(bad);
+        h.checks = Some(good.clone());
+        h.rewrite_s = Some(3.0);
+        assert!(h.rewritten());
+        assert_eq!(h.shown_after_s(), 7.0);
+        let mut plain = hint(Some(1.0), 5.0, 30, false);
+        plain.checks = Some(good);
+        let run = ModelRun {
+            alias: "m".into(),
+            variant: "v".into(),
+            device: "GPU".into(),
+            execution_provider: "ep".into(),
+            size_mb: None,
+            download_s: None,
+            load_s: None,
+            warmup_s: None,
+            hints: vec![h, plain],
+            error: None,
+        };
+        let s = run.summary();
+        assert_eq!(s.rewrites, 1);
+        assert_eq!(s.passed_checks, 2);
+        assert_eq!(s.passed_first, 1);
+        assert_eq!(s.slowest_total_s, Some(7.0));
+        assert_eq!(s.median_total_s, Some(4.5));
     }
 }

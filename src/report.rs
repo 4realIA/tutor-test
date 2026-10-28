@@ -59,6 +59,7 @@ padding:1px 9px;margin:0 6px 4px 0;border:1px solid currentColor}
 .good{color:var(--good)}.ok{color:var(--ok)}.bad{color:var(--bad)}
 .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
 .model{border-top:3px solid var(--accent);padding-top:8px}.label{font-size:13px;color:var(--muted);margin-top:10px}
+summary{cursor:pointer;font-size:13px;margin-top:4px}
 "#;
 
 pub fn render(run: &Run, cases: &[Case]) -> String {
@@ -117,8 +118,8 @@ pub fn render(run: &Run, cases: &[Case]) -> String {
     // Summary
     h.push_str(
         "<h2>Results</h2><div class=\"card scroll\"><table><tr><th>Model</th><th>Ran on</th>\
-         <th>Speed</th><th>Typical hint</th><th>Slowest</th><th>First words after</th>\
-         <th>Words/s*</th><th>Checks passed</th><th>Download</th><th>Load</th></tr>",
+         <th>Speed</th><th>Typical hint</th><th>Slowest†</th><th>First words after</th>\
+         <th>Words/s*</th><th>Checks passed: first try</th><th>After rewrite</th><th>Download</th><th>Load</th></tr>",
     );
     for model in &run.models {
         summary_row(&mut h, model);
@@ -126,7 +127,9 @@ pub fn render(run: &Run, cases: &[Case]) -> String {
     h.push_str(
         "</table><p class=\"muted\">Typical = median of all hints. *Tokens per second, roughly \
          words per second. Checks: on topic, didn't give away the fixed line, no code block, \
-         under 110 words. They're only a rough guide; read the hints below.</p></div>",
+         under 110 words. When a hint gave the answer away or showed code, the model was asked \
+         once to rewrite it (as the app would); \"after rewrite\" counts what the learner would see. \
+         †Including any rewrite. The checks are only a rough guide; read the hints below.</p></div>",
     );
 
     // Each case
@@ -175,7 +178,7 @@ fn summary_row(h: &mut String, model: &ModelRun) {
         h,
         "<tr><td><strong>{}</strong><br><span class=\"muted\">{}</span>{}</td>\
          <td>{}<br><span class=\"muted\">{}</span></td><td class=\"{class}\"><strong>{verdict}</strong></td>\
-         <td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} of {}</td><td>{}{}</td><td>{}</td></tr>",
+         <td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} of {}</td><td>{} of {}{}</td><td>{}{}</td><td>{}</td></tr>",
         escape(&model.alias),
         escape(&model.variant),
         error,
@@ -187,8 +190,15 @@ fn summary_row(h: &mut String, model: &ModelRun) {
         s.median_tokens_per_s
             .map(|t| format!("{t:.1}"))
             .unwrap_or("–".into()),
+        s.passed_first,
+        model.hints.len(),
         s.passed_checks,
         model.hints.len(),
+        if s.rewrites > 0 {
+            format!("<br><span class=\"muted\">{} rewritten</span>", s.rewrites)
+        } else {
+            String::new()
+        },
         model
             .download_s
             .map(|d| secs(Some(d)))
@@ -214,11 +224,22 @@ fn hint_cell(h: &mut String, model: &ModelRun, case_id: &str) {
             );
         }
         Some(r) => {
+            let rewrite = match (r.rewritten(), r.rewrite_s) {
+                (true, Some(extra)) => format!(" · rewritten, +{}", secs(Some(extra))),
+                _ => String::new(),
+            };
+            let thought = if r.thinking_words > 0 {
+                format!(" · thought {} words first", r.thinking_words)
+            } else {
+                String::new()
+            };
             let _ = write!(
                 h,
-                "<div class=\"muted\">{} · first words after {}</div>",
+                "<div class=\"muted\">{} · first words after {}{}{}</div>",
                 secs(Some(r.total_s)),
-                secs(r.first_token_s)
+                secs(r.first_token_s),
+                thought,
+                rewrite
             );
             if let Some(c) = &r.checks {
                 let tag = |ok: bool, good: &str, bad: &str| {
@@ -242,6 +263,17 @@ fn hint_cell(h: &mut String, model: &ModelRun, case_id: &str) {
                 h.push_str("</div>");
             }
             let _ = write!(h, "<p class=\"hint\">{}</p>", escape(r.text.trim()));
+            if let Some(first) = &r.first_text {
+                let _ = write!(
+                    h,
+                    "<details><summary class=\"muted\">First try (gave the answer away)</summary>\
+                     <p class=\"hint muted\">{}</p></details>",
+                    escape(first.trim())
+                );
+            }
+            if let Some(e) = &r.rewrite_error {
+                let _ = write!(h, "<p class=\"muted\">Rewrite failed: {}</p>", escape(e));
+            }
         }
     }
     h.push_str("</div>");
@@ -286,6 +318,11 @@ mod tests {
                     total_s: 6.4,
                     tokens: 40,
                     error: None,
+                    first_text: None,
+                    first_checks: None,
+                    rewrite_s: None,
+                    rewrite_error: None,
+                    thinking_words: 0,
                 }],
                 error: None,
             }],
@@ -304,6 +341,20 @@ mod tests {
         assert!(html.contains("None (processor only)"));
         assert!(html.contains("Not run."));
         assert!(html.contains("1 of 1"));
+        assert!(!html.contains("First try"));
+    }
+
+    #[test]
+    fn rewritten_hint_shows_both() {
+        let mut run = sample_run();
+        let h = &mut run.models[0].hints[0];
+        h.first_text = Some("Type `if temperature > 30:` <x>".into());
+        h.rewrite_s = Some(2.5);
+        let html = render(&run, &built_in().unwrap());
+        assert!(html.contains("First try (gave the answer away)"));
+        assert!(html.contains("&lt;x&gt;"));
+        assert!(html.contains("rewritten, +2.5 s"));
+        assert!(html.contains("1 rewritten"));
     }
 
     #[test]

@@ -14,13 +14,23 @@ use foundry_local_sdk::{
 use tokio_stream::StreamExt;
 
 use crate::cases::Case;
-use crate::prompt;
+use crate::prompt::{self, Role};
 use crate::results::{Accelerators, HintResult, ModelRun};
 use crate::score;
 use crate::system;
 
 /// Longest we wait for one hint before calling it failed.
 const HINT_TIMEOUT: Duration = Duration::from_secs(240);
+#[derive(Default)]
+struct Generation {
+    text: String,
+    thinking_words: u64,
+    first_token_s: Option<f64>,
+    total_s: f64,
+    tokens: u64,
+    error: Option<String>,
+}
+
 /// Room left on the disk after a download.
 const DISK_MARGIN_MB: u64 = 500;
 
@@ -307,82 +317,145 @@ impl Runner {
         Ok(())
     }
 
+    /// One hint, as the app would produce it: ask, check, and if the hint gave
+    /// the answer away or showed code, ask once for a rewrite.
     async fn hint(&self, model: &Model, case: &Case) -> HintResult {
+        let no_think = wants_no_think(model.alias());
+        let first = self
+            .generate(
+                model,
+                &prompt::with_no_think(prompt::conversation(case), no_think),
+            )
+            .await;
         let mut result = HintResult {
             case_id: case.id.clone(),
-            text: String::new(),
-            first_token_s: None,
-            total_s: 0.0,
-            tokens: 0,
+            text: first.text,
+            first_token_s: first.first_token_s,
+            total_s: first.total_s,
+            tokens: first.tokens,
             checks: None,
-            error: None,
+            error: first.error,
+            first_text: None,
+            first_checks: None,
+            rewrite_s: None,
+            rewrite_error: None,
+            thinking_words: first.thinking_words,
         };
-        let request = Request::from_items(vec![
-            Item::system_message(vec![Item::text(prompt::SYSTEM)]),
-            Item::user_message(vec![Item::text(prompt::user_message(case))]),
-        ])
-        .with_options(RequestOptions {
+        if result.error.is_some() {
+            return result;
+        }
+        let checks = score::check(case, &result.text);
+        if !(checks.gave_answer || checks.code_block) || self.cancelled() {
+            result.checks = Some(checks);
+            return result;
+        }
+
+        let rewrite = self
+            .generate(
+                model,
+                &prompt::with_no_think(prompt::rewrite_conversation(case, &result.text), no_think),
+            )
+            .await;
+        result.rewrite_s = Some(rewrite.total_s);
+        match rewrite.error {
+            Some(e) => {
+                // Keep the first hint; note why there's no rewrite.
+                result.rewrite_error = Some(e);
+                result.checks = Some(checks);
+            }
+            None => {
+                result.first_text = Some(std::mem::replace(&mut result.text, rewrite.text));
+                result.first_checks = Some(checks);
+                result.checks = Some(score::check(case, &result.text));
+            }
+        }
+        result
+    }
+
+    /// Stream one answer for a conversation, timing it.
+    async fn generate(&self, model: &Model, turns: &[(Role, String)]) -> Generation {
+        let items = turns
+            .iter()
+            .map(|(role, text)| {
+                let content = vec![Item::text(text.as_str())];
+                match role {
+                    Role::System => Item::system_message(content),
+                    Role::User => Item::user_message(content),
+                    Role::Assistant => Item::assistant_message(content),
+                }
+            })
+            .collect::<Vec<_>>();
+        let request = Request::from_items(items).with_options(RequestOptions {
             search: SearchOptions {
                 temperature: Some(0.2),
-                max_output_tokens: Some(220),
+                // Room for models that think before answering; the prompt keeps
+                // the visible hint to 4 sentences.
+                max_output_tokens: Some(1024),
                 seed: Some(7),
                 ..SearchOptions::default()
             },
             ..RequestOptions::default()
         });
 
+        let mut out = Generation::default();
         let started = Instant::now();
         let mut pieces = 0u64;
         let mut reported = None;
+        let mut thinking = String::new();
         let outcome = tokio::time::timeout(HINT_TIMEOUT, async {
-            // A fresh session per hint: each learner question stands alone.
+            // A fresh session per request: each learner question stands alone.
             let session = ChatSession::new(model).await?;
             let mut stream = session.process_streaming_request(request);
             while let Some(item) = stream.next().await {
                 if self.cancelled() {
                     return Err(anyhow!("stopped"));
                 }
-                if let Item::Text {
-                    text,
-                    kind: TextKind::Default,
-                } = item?
-                {
-                    if text.is_empty() {
-                        continue;
+                match item? {
+                    Item::Text {
+                        text,
+                        kind: TextKind::Default,
+                    } if !text.is_empty() => {
+                        if out.first_token_s.is_none() {
+                            out.first_token_s = Some(started.elapsed().as_secs_f64());
+                        }
+                        pieces += 1;
+                        out.text.push_str(&text);
                     }
-                    if result.first_token_s.is_none() {
-                        result.first_token_s = Some(started.elapsed().as_secs_f64());
-                    }
-                    pieces += 1;
-                    result.text.push_str(&text);
+                    Item::Text {
+                        text,
+                        kind: TextKind::Reasoning,
+                    } => thinking.push_str(&text),
+                    _ => {}
                 }
             }
             if let Ok(response) = stream.response().await {
                 reported = Some(u64::from(response.usage.completion_tokens));
-                if result.text.is_empty() {
-                    result.text = response.text();
+                if out.text.is_empty() {
+                    out.text = response.text();
                 }
             }
             anyhow::Ok(())
         })
         .await;
-        result.total_s = started.elapsed().as_secs_f64();
-        result.tokens = reported.filter(|t| *t > 0).unwrap_or(pieces);
-
-        match outcome {
-            Err(_) => {
-                result.error = Some(format!(
-                    "no full answer within {} s",
-                    HINT_TIMEOUT.as_secs()
-                ))
-            }
-            Ok(Err(e)) => result.error = Some(e.to_string()),
-            Ok(Ok(())) if result.text.trim().is_empty() => {
-                result.error = Some("empty answer".into())
-            }
-            Ok(Ok(())) => result.checks = Some(score::check(case, &result.text)),
+        out.total_s = started.elapsed().as_secs_f64();
+        // Some models put their thinking inline in <think> tags instead.
+        let (visible, inline) = prompt::split_thinking(&out.text);
+        if !inline.is_empty() {
+            thinking.push_str(&inline);
+            out.text = visible;
         }
-        result
+        out.thinking_words = thinking.split_whitespace().count() as u64;
+        out.tokens = reported.filter(|t| *t > 0).unwrap_or(pieces);
+        out.error = match outcome {
+            Err(_) => Some(format!(
+                "no full answer within {} s",
+                HINT_TIMEOUT.as_secs()
+            )),
+            Ok(Err(e)) => Some(e.to_string()),
+            Ok(Ok(())) if out.text.trim().is_empty() => Some("empty answer".into()),
+            Ok(Ok(())) => None,
+        };
+        out
     }
 
     pub async fn remove(&self, models: &[Arc<Model>]) {
@@ -397,6 +470,11 @@ impl Runner {
     pub fn cache_dir(&self) -> &Path {
         &self.data_dir
     }
+}
+
+/// Qwen3-family models think before answering unless told not to.
+fn wants_no_think(alias: &str) -> bool {
+    alias.to_lowercase().starts_with("qwen3")
 }
 
 fn device_name(d: &DeviceType) -> String {

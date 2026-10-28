@@ -7,10 +7,11 @@ What it does
   the models run on this computer. At the end it opens a report in your browser.
 
 Before you start
-  - About 6 GB of free disk space (the models are downloaded once).
+  - About 15 GB of free disk space (four models are downloaded once;
+    the program offers to delete them at the end).
   - A good internet connection for the downloads.
   - Plug in the laptop: the test keeps the processor busy for a while.
-  - Allow 30 to 60 minutes. You can leave it running.
+  - Allow 1 to 2 hours, mostly downloading. You can leave it running.
 
 Windows
   1. Right-click the zip file and choose "Extract All...". Keep every file
@@ -37,6 +38,6 @@ Mac (Terminal)
 To stop early press Ctrl+C. A report of what finished is still written.
 
 Options (for Andy): run with --help to see them, e.g.
-  tutor-test --with-7b          also try the bigger 7B coding model
+  tutor-test --with-14b         also try the 14B coding model (big, slow)
   tutor-test --all-variants     try both the processor and graphics versions
   tutor-test --list             show every model in the catalog

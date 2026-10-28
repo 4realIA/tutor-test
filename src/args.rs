@@ -4,16 +4,22 @@ use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 
-pub const DEFAULT_MODELS: [&str; 2] = ["qwen2.5-coder-1.5b", "phi-4-mini"];
-pub const BIG_MODEL: &str = "qwen2.5-coder-7b";
+pub const DEFAULT_MODELS: [&str; 4] = [
+    "qwen2.5-coder-1.5b",
+    "qwen2.5-coder-3b",
+    "qwen3.5-4b",
+    "qwen2.5-coder-7b",
+];
+pub const BIG_MODEL: &str = "qwen2.5-coder-14b";
 
 pub const HELP: &str = "\
 Tutor test: how well and how fast local AI models give beginner Python hints.
 
 Usage: tutor-test [options]
 
-  --models a,b,...   Models to test (default: qwen2.5-coder-1.5b,phi-4-mini)
-  --with-7b          Also test qwen2.5-coder-7b (about 5 GB more, slower)
+  --models a,b,...   Models to test (default: qwen2.5-coder-1.5b, qwen2.5-coder-3b,
+                     qwen3.5-4b, qwen2.5-coder-7b)
+  --with-14b         Also test qwen2.5-coder-14b (about 9 GB more, slow)
   --all-variants     Test every variant of each model (e.g. both CPU and GPU)
   --cases N          Only run the first N cases (quick check)
   --list             List the models in the catalog and exit
@@ -60,7 +66,7 @@ impl Default for Args {
 
 pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Args> {
     let mut a = Args::default();
-    let mut with_7b = false;
+    let mut with_big = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let mut value = |name: &str| -> Result<String> {
@@ -81,7 +87,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Args> {
                 }
                 a.models = list;
             }
-            "--with-7b" => with_7b = true,
+            "--with-14b" => with_big = true,
             "--all-variants" => a.all_variants = true,
             "--cases" => {
                 let n: usize = value("--cases")?
@@ -101,7 +107,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Args> {
             other => bail!("unknown option {other:?} (try --help)"),
         }
     }
-    if with_7b && !a.models.iter().any(|m| m == BIG_MODEL) {
+    if with_big && !a.models.iter().any(|m| m == BIG_MODEL) {
         a.models.push(BIG_MODEL.to_string());
     }
     let mut seen = std::collections::HashSet::new();
@@ -125,7 +131,7 @@ mod tests {
     #[test]
     fn options() {
         let a = p(
-            "--models phi-4-mini,,qwen2.5-1.5b --with-7b --cases 3 --no-open --keep --all-variants",
+            "--models phi-4-mini,,qwen2.5-1.5b --with-14b --cases 3 --no-open --keep --all-variants",
         )
         .unwrap();
         assert_eq!(a.models, ["phi-4-mini", "qwen2.5-1.5b", BIG_MODEL]);

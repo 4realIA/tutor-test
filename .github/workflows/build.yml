@@ -107,10 +107,10 @@ jobs:
             | awk '{printf "%s %s %s %s | ", $1, $2, $3, $4} NR%12==0 {print ""} END {print ""}' \
             | while IFS= read -r chunk; do [ -n "$chunk" ] && echo "::notice title=Catalog::$chunk"; done
 
-      - name: End-to-end run with the smallest model
+      - name: End-to-end run with the smallest models
         run: |
           set -euo pipefail
-          "$PKG/${{ matrix.exe }}" --models qwen2.5-0.5b --cases 3 --no-open --cleanup --out smoke < /dev/null
+          "$PKG/${{ matrix.exe }}" --models qwen2.5-0.5b,qwen3-0.6b --cases 3 --no-open --cleanup --out smoke < /dev/null
           report=$(ls -d smoke/tutor-test-*/ | head -1)
           python3 - "$report/results.json" <<'EOF'
           import json, sys
@@ -126,7 +126,9 @@ jobs:
                               f'load {m["load_s"]}s, warm-up {m["warmup_s"]}s, error={m["error"]}')
               for h in m["hints"]:
                   notice(f'Hint {h["case_id"]}', f'{h["total_s"]:.1f}s, first words {h["first_token_s"]}s, '
-                                                 f'{h["tokens"]} tokens, checks={h["checks"]}, error={h["error"]} :: {h["text"]}')
+                                                 f'{h["tokens"]} tokens, thought {h["thinking_words"]} words, rewrite {h["rewrite_s"]}s, '
+                                                 f'checks={h["checks"]}, error={h["error"]} :: {h["text"]}'
+                                                 + (f' || FIRST TRY: {h["first_text"]}' if h["first_text"] else ''))
           answered = sum(1 for m in run["models"] for h in m["hints"] if not h["error"])
           if answered == 0:
               sys.exit("No hints were answered")
