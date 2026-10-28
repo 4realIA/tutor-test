@@ -109,7 +109,8 @@ jobs:
 
       - name: End-to-end run with the smallest models
         run: |
-          set -uo pipefail
+          # GitHub runs steps with -e; turn it off so a crash is reported, not fatal.
+          set +e -uo pipefail
           failed=0
           for model in qwen2.5-0.5b qwen3-0.6b; do
             "$PKG/${{ matrix.exe }}" --models "$model" --cases 3 --no-open --cleanup --out "smoke/$model" < /dev/null > "run-$model.log" 2>&1
