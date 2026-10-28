@@ -111,12 +111,18 @@ jobs:
           python3 - "$report/results.json" <<'EOF'
           import json, sys
           run = json.load(open(sys.argv[1]))
-          print("accelerators:", run["accelerators"])
+          def notice(title, msg):
+              # Annotations are readable without the full log.
+              msg = msg.replace("%", "%25").replace("\r", "").replace("\n", " ")
+              print(f"::notice title={title}::{msg[:900]}")
+          acc = run["accelerators"]
+          notice("Accelerators", f'registered={acc["registered"]} failed={acc["failed"]} note={acc["note"]}')
           for m in run["models"]:
-              print(m["alias"], m["variant"], m["device"], m["execution_provider"], "error:", m["error"])
+              notice("Model", f'{m["alias"]} {m["variant"]} on {m["device"]} / {m["execution_provider"]}, '
+                              f'load {m["load_s"]}s, warm-up {m["warmup_s"]}s, error={m["error"]}')
               for h in m["hints"]:
-                  print(f'  {h["case_id"]}: {h["total_s"]:.1f}s tokens={h["tokens"]} error={h["error"]}')
-                  print("   ", (h["text"] or "")[:200].replace("\n", " "))
+                  notice(f'Hint {h["case_id"]}', f'{h["total_s"]:.1f}s, first words {h["first_token_s"]}s, '
+                                                 f'{h["tokens"]} tokens, checks={h["checks"]}, error={h["error"]} :: {h["text"]}')
           answered = sum(1 for m in run["models"] for h in m["hints"] if not h["error"])
           if answered == 0:
               sys.exit("No hints were answered")
