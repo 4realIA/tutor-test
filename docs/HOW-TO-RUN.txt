@@ -26,9 +26,13 @@ Windows
   5. Send the folder named "reports" (next to the program) back to Andy.
 
 Mac (Terminal)
-  cd into the unzipped folder, then:
+  Go INTO the unzipped folder (the one that contains tutor-test and the
+  .dylib files), then:
+    chmod +x tutor-test
     xattr -dr com.apple.quarantine .
     ./tutor-test
+  (GitHub's zip drops the "can run" flag, hence chmod. Run xattr only inside
+  this folder, not in a parent folder.)
 
 To stop early press Ctrl+C. A report of what finished is still written.
 
