@@ -102,6 +102,10 @@ jobs:
       - name: List the model catalog
         run: |
           "$PKG/${{ matrix.exe }}" --list < /dev/null | tee catalog.txt
+          # Chat models only, a few lines per annotation (readable without the log).
+          grep -v -i -E "whisper|embed|vision|ALIAS" catalog.txt \
+            | awk '{printf "%s %s %s %s | ", $1, $2, $3, $4} NR%12==0 {print ""} END {print ""}' \
+            | while IFS= read -r chunk; do [ -n "$chunk" ] && echo "::notice title=Catalog::$chunk"; done
 
       - name: End-to-end run with the smallest model
         run: |
