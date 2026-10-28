@@ -19,6 +19,18 @@ use crate::results::{Accelerators, HintResult, ModelRun};
 use crate::score;
 use crate::system;
 
+/// A model that can't answer in reasonable time on this computer.
+#[derive(Debug)]
+struct TooSlow(String);
+
+impl std::fmt::Display for TooSlow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TooSlow {}
+
 /// Start of the error recorded when a hint times out.
 const TIMED_OUT: &str = "no full answer within";
 /// A model whose warm-up answer takes longer than this is too slow to test.
@@ -205,8 +217,12 @@ impl Runner {
         };
         println!("\n== {alias} ({}, {})", run.variant, run.device);
         if let Err(e) = self.prepare(&model, &mut run, downloaded).await {
-            run.error = Some(e.to_string());
             println!("   {e}");
+            if e.downcast_ref::<TooSlow>().is_some() {
+                run.too_slow = Some(e.to_string());
+            } else {
+                run.error = Some(e.to_string());
+            }
             return run;
         }
         if let Some(w) = run.warmup_s.filter(|w| *w > WARMUP_LIMIT.as_secs_f64()) {
@@ -331,9 +347,18 @@ impl Runner {
             mentions: vec!["quote".into()],
             giveaway: "print(\"Hello\")".into(),
         };
-        let hint = self.hint(model, &warm).await;
-        if let Some(e) = hint.error {
-            return Err(anyhow!("The model loaded but couldn't answer: {e}"));
+        let turns =
+            prompt::with_no_think(prompt::conversation(&warm), wants_no_think(model.alias()));
+        let answer = self.generate(model, &turns, WARMUP_LIMIT).await;
+        match answer.error {
+            Some(e) if e.starts_with(TIMED_OUT) => {
+                return Err(anyhow!(TooSlow(format!(
+                    "Too slow on this computer: no warm-up answer within {} s.",
+                    WARMUP_LIMIT.as_secs()
+                ))));
+            }
+            Some(e) => return Err(anyhow!("The model loaded but couldn't answer: {e}")),
+            None => {}
         }
         run.warmup_s = Some(started.elapsed().as_secs_f64());
         Ok(())
@@ -347,6 +372,7 @@ impl Runner {
             .generate(
                 model,
                 &prompt::with_no_think(prompt::conversation(case), no_think),
+                HINT_TIMEOUT,
             )
             .await;
         let mut result = HintResult {
@@ -376,6 +402,7 @@ impl Runner {
             .generate(
                 model,
                 &prompt::with_no_think(prompt::rewrite_conversation(case, &result.text), no_think),
+                HINT_TIMEOUT,
             )
             .await;
         result.rewrite_s = Some(rewrite.total_s);
@@ -395,7 +422,12 @@ impl Runner {
     }
 
     /// Stream one answer for a conversation, timing it.
-    async fn generate(&self, model: &Model, turns: &[(Role, String)]) -> Generation {
+    async fn generate(
+        &self,
+        model: &Model,
+        turns: &[(Role, String)],
+        limit: Duration,
+    ) -> Generation {
         let items = turns
             .iter()
             .map(|(role, text)| {
@@ -424,7 +456,7 @@ impl Runner {
         let mut pieces = 0u64;
         let mut reported = None;
         let mut thinking = String::new();
-        let outcome = tokio::time::timeout(HINT_TIMEOUT, async {
+        let outcome = tokio::time::timeout(limit, async {
             // A fresh session per request: each learner question stands alone.
             let session = ChatSession::new(model).await?;
             let mut stream = session.process_streaming_request(request);
@@ -469,7 +501,7 @@ impl Runner {
         out.thinking_words = thinking.split_whitespace().count() as u64;
         out.tokens = reported.filter(|t| *t > 0).unwrap_or(pieces);
         out.error = match outcome {
-            Err(_) => Some(format!("{TIMED_OUT} {} s", HINT_TIMEOUT.as_secs())),
+            Err(_) => Some(format!("{TIMED_OUT} {} s", limit.as_secs())),
             Ok(Err(e)) => Some(e.to_string()),
             Ok(Ok(())) if out.text.trim().is_empty() => Some("empty answer".into()),
             Ok(Ok(())) => None,
