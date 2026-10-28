@@ -144,20 +144,35 @@ async fn run() -> Result<()> {
                     &mut downloaded,
                 )
                 .await;
-            let fall_back = result.too_slow.is_some() && result.device != runner::CPU_NAME;
+            let failed_device = result.device.clone();
+            let fall_back = result.too_slow.is_some()
+                || result
+                    .error
+                    .as_deref()
+                    .is_some_and(runner::worth_another_device);
             run.models.push(result);
             // Save before unloading: a stopped or crashed run still leaves a report.
             write_report(&out_dir, &run, &cases)?;
             runner.unload(&variant).await;
 
-            // A GPU version that's too slow here: try the processor version instead.
+            // A version that failed to load or was too slow here: try the next
+            // device (AI chip -> graphics -> processor).
+            let tried: Vec<String> = run.models.iter().map(|m| m.variant.clone()).collect();
             if fall_back
                 && !args.all_variants
-                && let Some(cpu) = runner.cpu_variant(alias).await
-                && run.models.iter().all(|m| m.variant != cpu.id())
+                && let Some(next) = runner.fallback_variant(alias, &failed_device, &tried).await
             {
-                println!("   Trying its processor (CPU) version instead.");
-                queue.push_back(cpu);
+                let device = next
+                    .info()
+                    .ok()
+                    .and_then(|i| i.runtime)
+                    .map(|r| r.device_type);
+                let name = match device {
+                    Some(foundry_local_sdk::DeviceType::GPU) => "graphics (GPU)",
+                    _ => "processor (CPU)",
+                };
+                println!("   Trying its {name} version instead.");
+                queue.push_back(next);
             }
         }
     }

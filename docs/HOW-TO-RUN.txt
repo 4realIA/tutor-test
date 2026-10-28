@@ -7,11 +7,11 @@ What it does
   the models run on this computer. At the end it opens a report in your browser.
 
 Before you start
-  - About 15 GB of free disk space (four models are downloaded once;
-    the program offers to delete them at the end).
+  - About 20 GB of free disk space (two models, sometimes in more than one
+    version; the program offers to delete them at the end).
   - A good internet connection for the downloads.
   - Plug in the laptop: the test keeps the processor busy for a while.
-  - Allow 1 to 2 hours, mostly downloading. You can leave it running.
+  - Allow 30 to 60 minutes, mostly downloading. You can leave it running.
 
 Windows
   1. Right-click the zip file and choose "Extract All...". Keep every file

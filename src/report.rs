@@ -145,7 +145,8 @@ pub fn render(run: &Run, cases: &[Case]) -> String {
             escape(&numbered(case.code())),
             escape(case.output()),
         );
-        for model in &run.models {
+        // Versions that never answered (failed or too slow) are in the table above.
+        for model in run.models.iter().filter(|m| !m.hints.is_empty()) {
             hint_cell(&mut h, model, &case.id);
         }
         h.push_str("</div></div>");

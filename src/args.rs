@@ -4,12 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 
-pub const DEFAULT_MODELS: [&str; 4] = [
-    "qwen2.5-coder-1.5b",
-    "qwen2.5-coder-3b",
-    "qwen3.5-4b",
-    "qwen2.5-coder-7b",
-];
+pub const DEFAULT_MODELS: [&str; 2] = ["qwen2.5-coder-3b", "qwen2.5-coder-7b"];
 pub const BIG_MODEL: &str = "qwen2.5-coder-14b";
 
 pub const HELP: &str = "\
@@ -17,8 +12,7 @@ Tutor test: how well and how fast local AI models give beginner Python hints.
 
 Usage: tutor-test [options]
 
-  --models a,b,...   Models to test (default: qwen2.5-coder-1.5b, qwen2.5-coder-3b,
-                     qwen3.5-4b, qwen2.5-coder-7b)
+  --models a,b,...   Models to test (default: qwen2.5-coder-3b, qwen2.5-coder-7b)
   --with-14b         Also test qwen2.5-coder-14b (about 9 GB more, slow)
   --all-variants     Test every variant of each model (e.g. both CPU and GPU)
   --cases N          Only run the first N cases (quick check)

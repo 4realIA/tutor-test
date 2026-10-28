@@ -331,7 +331,7 @@ impl Runner {
         model
             .load()
             .await
-            .map_err(|e| anyhow!("Couldn't load the model: {e}"))?;
+            .map_err(|e| anyhow!("{LOAD_FAILED} {e}"))?;
         run.load_s = Some(started.elapsed().as_secs_f64());
 
         // The first answer after loading is slower; don't count it.
@@ -357,7 +357,7 @@ impl Runner {
                     WARMUP_LIMIT.as_secs()
                 ))));
             }
-            Some(e) => return Err(anyhow!("The model loaded but couldn't answer: {e}")),
+            Some(e) => return Err(anyhow!("{NO_ANSWER} {e}")),
             None => {}
         }
         run.warmup_s = Some(started.elapsed().as_secs_f64());
@@ -521,18 +521,36 @@ impl Runner {
         }
     }
 
-    /// The processor (CPU) version of a model, if the catalog has one.
-    pub async fn cpu_variant(&self, alias: &str) -> Option<Arc<Model>> {
-        self.variants(alias, true)
-            .await
-            .ok()?
-            .into_iter()
-            .find(|v| {
-                v.info()
-                    .ok()
-                    .and_then(|i| i.runtime)
-                    .is_some_and(|r| matches!(r.device_type, DeviceType::CPU))
-            })
+    /// The next version of a model to try after one failed or was too slow:
+    /// graphics (GPU) first, then the processor (CPU). AI-chip (NPU) versions
+    /// are never a fallback, and versions already tried are skipped.
+    pub async fn fallback_variant(
+        &self,
+        alias: &str,
+        failed_device: &str,
+        tried: &[String],
+    ) -> Option<Arc<Model>> {
+        let variants = self.variants(alias, true).await.ok()?;
+        let device_of =
+            |v: &Arc<Model>| v.info().ok().and_then(|i| i.runtime).map(|r| r.device_type);
+        let order: &[DeviceType] = if failed_device == GPU_NAME {
+            &[DeviceType::CPU]
+        } else if failed_device == CPU_NAME {
+            &[]
+        } else {
+            &[DeviceType::GPU, DeviceType::CPU]
+        };
+        order.iter().find_map(|want| {
+            variants
+                .iter()
+                .find(|v| {
+                    !tried.iter().any(|t| t == v.id())
+                        && device_of(v).is_some_and(|d| {
+                            std::mem::discriminant(&d) == std::mem::discriminant(want)
+                        })
+                })
+                .cloned()
+        })
     }
 
     pub async fn remove(&self, models: &[Arc<Model>]) {
@@ -555,13 +573,37 @@ fn wants_no_think(alias: &str) -> bool {
 }
 
 pub const CPU_NAME: &str = "Processor (CPU)";
+pub const GPU_NAME: &str = "Graphics (GPU)";
+
+/// Errors after which another device is worth trying (not download or disk problems).
+pub fn worth_another_device(error: &str) -> bool {
+    error.starts_with(LOAD_FAILED) || error.starts_with(NO_ANSWER)
+}
+
+const LOAD_FAILED: &str = "Couldn't load the model:";
+const NO_ANSWER: &str = "The model loaded but couldn't answer:";
 
 fn device_name(d: &DeviceType) -> String {
     match d {
         DeviceType::CPU => CPU_NAME,
-        DeviceType::GPU => "Graphics (GPU)",
+        DeviceType::GPU => GPU_NAME,
         DeviceType::NPU => "AI chip (NPU)",
         DeviceType::Invalid => "Unknown",
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_and_answer_failures_try_another_device() {
+        assert!(worth_another_device(&format!("{LOAD_FAILED} native error")));
+        assert!(worth_another_device(&format!("{NO_ANSWER} empty answer")));
+        assert!(!worth_another_device("Download failed: timeout"));
+        assert!(!worth_another_device(
+            "Not enough disk space: needs about 5 GB"
+        ));
+    }
 }
