@@ -178,14 +178,38 @@ impl Runner {
     }
 
     /// The model variants to test for one alias.
+    /// The versions of a model to test. Normally just the one we'd try first
+    /// (see [`rank`]); with `all`, every version in that order.
     pub async fn variants(&self, alias: &str, all: bool) -> Result<Vec<Arc<Model>>> {
+        let mut ranked = self.ranked_variants(alias).await?;
+        if !all {
+            ranked.truncate(1);
+        }
+        Ok(ranked)
+    }
+
+    async fn ranked_variants(&self, alias: &str) -> Result<Vec<Arc<Model>>> {
         let model = self
             .manager
             .catalog()
             .get_model(alias)
             .await
             .map_err(|e| anyhow!("{alias} isn't in the model catalog ({e})"))?;
-        Ok(if all { model.variants() } else { vec![model] })
+        let mut variants = model.variants();
+        if variants.is_empty() {
+            return Ok(vec![model]);
+        }
+        variants.sort_by_key(|v| {
+            let runtime = v.info().ok().and_then(|i| i.runtime);
+            rank(
+                runtime.as_ref().map(|r| &r.device_type),
+                runtime
+                    .as_ref()
+                    .map(|r| r.execution_provider.as_str())
+                    .unwrap_or(""),
+            )
+        });
+        Ok(variants)
     }
 
     /// Download (if needed), load, warm up, then time every case. Never fails:
@@ -522,35 +546,13 @@ impl Runner {
     }
 
     /// The next version of a model to try after one failed or was too slow:
-    /// graphics (GPU) first, then the processor (CPU). AI-chip (NPU) versions
-    /// are never a fallback, and versions already tried are skipped.
-    pub async fn fallback_variant(
-        &self,
-        alias: &str,
-        failed_device: &str,
-        tried: &[String],
-    ) -> Option<Arc<Model>> {
-        let variants = self.variants(alias, true).await.ok()?;
-        let device_of =
-            |v: &Arc<Model>| v.info().ok().and_then(|i| i.runtime).map(|r| r.device_type);
-        let order: &[DeviceType] = if failed_device == GPU_NAME {
-            &[DeviceType::CPU]
-        } else if failed_device == CPU_NAME {
-            &[]
-        } else {
-            &[DeviceType::GPU, DeviceType::CPU]
-        };
-        order.iter().find_map(|want| {
-            variants
-                .iter()
-                .find(|v| {
-                    !tried.iter().any(|t| t == v.id())
-                        && device_of(v).is_some_and(|d| {
-                            std::mem::discriminant(&d) == std::mem::discriminant(want)
-                        })
-                })
-                .cloned()
-        })
+    /// the best-ranked version not tried yet.
+    pub async fn fallback_variant(&self, alias: &str, tried: &[String]) -> Option<Arc<Model>> {
+        self.ranked_variants(alias)
+            .await
+            .ok()?
+            .into_iter()
+            .find(|v| !tried.iter().any(|t| t == v.id()))
     }
 
     pub async fn remove(&self, models: &[Arc<Model>]) {
@@ -575,6 +577,22 @@ fn wants_no_think(alias: &str) -> bool {
 pub const CPU_NAME: &str = "Processor (CPU)";
 pub const GPU_NAME: &str = "Graphics (GPU)";
 
+/// Order in which to try a model's versions. Standard graphics (WebGPU) first:
+/// it ran on the Macs and on Mom's Intel laptop. Then other graphics, then the
+/// processor. Intel's OpenVINO versions failed to load on her laptop with this
+/// engine release, and AI-chip (NPU) versions are untested, so they come last.
+pub fn rank(device: Option<&DeviceType>, execution_provider: &str) -> u8 {
+    let ep = execution_provider.to_lowercase();
+    match device {
+        _ if ep.contains("openvino") => 4,
+        Some(DeviceType::GPU) if ep.contains("webgpu") => 0,
+        Some(DeviceType::GPU) => 1,
+        Some(DeviceType::CPU) => 2,
+        Some(DeviceType::NPU) => 3,
+        _ => 5,
+    }
+}
+
 /// Errors after which another device is worth trying (not download or disk problems).
 pub fn worth_another_device(error: &str) -> bool {
     error.starts_with(LOAD_FAILED) || error.starts_with(NO_ANSWER)
@@ -596,6 +614,21 @@ fn device_name(d: &DeviceType) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standard_graphics_first_openvino_last() {
+        let gpu = DeviceType::GPU;
+        let cpu = DeviceType::CPU;
+        let npu = DeviceType::NPU;
+        let webgpu = rank(Some(&gpu), "WebGpuExecutionProvider");
+        let dml = rank(Some(&gpu), "DmlExecutionProvider");
+        let proc = rank(Some(&cpu), "CPUExecutionProvider");
+        let ai_chip = rank(Some(&npu), "QNNExecutionProvider");
+        let ov_gpu = rank(Some(&gpu), "OpenVINOExecutionProvider");
+        let ov_npu = rank(Some(&npu), "OpenVINOExecutionProvider");
+        assert!(webgpu < dml && dml < proc && proc < ai_chip && ai_chip < ov_gpu);
+        assert_eq!(ov_gpu, ov_npu);
+    }
 
     #[test]
     fn load_and_answer_failures_try_another_device() {

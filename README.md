@@ -15,10 +15,12 @@ and writes `report.html` + `results.json`.
 
 See `docs/HOW-TO-RUN.txt` (shipped in the zip). Options: `tutor-test --help`.
 
-Default models: `qwen2.5-coder-3b`, `qwen2.5-coder-7b` (1.5B and Qwen 3.5 4B
-were ruled out in earlier runs). `--with-14b` adds `qwen2.5-coder-14b`. When a
-version fails to load, gives no answer, or is too slow, the next device is tried
-(AI chip -> graphics -> processor). Models are cached in
+Default model: `qwen2.5-coder-7b` (`--models qwen2.5-coder-3b,qwen2.5-coder-7b`
+for both; 1.5B and Qwen 3.5 4B were ruled out). `--with-14b` adds
+`qwen2.5-coder-14b`. Versions are tried in this order: standard graphics
+(WebGPU), other graphics, processor, AI chip, Intel OpenVINO last (it failed to
+load on an Intel Core Ultra laptop with this engine release). When a version
+fails to load, gives no answer, or is too slow, the next one is tried. Models are cached in
 `~/.tutor-test`. Each hint uses one worked example in the prompt; a hint that
 gives the answer away or shows code is rewritten once (as the app would), and
 both versions are kept. Qwen3-family models get `/no_think`.

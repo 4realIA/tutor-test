@@ -144,7 +144,6 @@ async fn run() -> Result<()> {
                     &mut downloaded,
                 )
                 .await;
-            let failed_device = result.device.clone();
             let fall_back = result.too_slow.is_some()
                 || result
                     .error
@@ -160,7 +159,7 @@ async fn run() -> Result<()> {
             let tried: Vec<String> = run.models.iter().map(|m| m.variant.clone()).collect();
             if fall_back
                 && !args.all_variants
-                && let Some(next) = runner.fallback_variant(alias, &failed_device, &tried).await
+                && let Some(next) = runner.fallback_variant(alias, &tried).await
             {
                 let device = next
                     .info()
@@ -169,6 +168,7 @@ async fn run() -> Result<()> {
                     .map(|r| r.device_type);
                 let name = match device {
                     Some(foundry_local_sdk::DeviceType::GPU) => "graphics (GPU)",
+                    Some(foundry_local_sdk::DeviceType::NPU) => "AI chip (NPU)",
                     _ => "processor (CPU)",
                 };
                 println!("   Trying its {name} version instead.");
