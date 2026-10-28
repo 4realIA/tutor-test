@@ -160,16 +160,19 @@ pub fn render(run: &Run, cases: &[Case]) -> String {
 
 fn summary_row(h: &mut String, model: &ModelRun) {
     let s = model.summary();
-    let (verdict, class) = if model.error.is_some() && s.answered == 0 {
+    let (verdict, class) = if model.too_slow.is_some() {
+        ("Too slow here", "bad")
+    } else if model.error.is_some() && s.answered == 0 {
         ("Failed", "bad")
     } else {
         speed_verdict(&s)
     };
     let error = model
-        .error
-        .as_ref()
+        .too_slow
+        .iter()
+        .chain(model.error.iter())
         .map(|e| format!("<br><span class=\"bad\">{}</span>", escape(e)))
-        .unwrap_or_default();
+        .collect::<String>();
     let size = model
         .size_mb
         .map(|mb| format!(" ({:.1} GB)", mb as f64 / 1024.0))
@@ -325,6 +328,7 @@ mod tests {
                     thinking_words: 0,
                 }],
                 error: None,
+                too_slow: None,
             }],
             stopped: None,
         }
@@ -342,6 +346,16 @@ mod tests {
         assert!(html.contains("Not run."));
         assert!(html.contains("1 of 1"));
         assert!(!html.contains("First try"));
+    }
+
+    #[test]
+    fn too_slow_model_is_called_out() {
+        let mut run = sample_run();
+        run.models[0].too_slow =
+            Some("Too slow on this computer: the warm-up answer took 199 s.".into());
+        let html = render(&run, &built_in().unwrap());
+        assert!(html.contains("Too slow here"));
+        assert!(html.contains("warm-up answer took 199 s"));
     }
 
     #[test]

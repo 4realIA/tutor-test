@@ -75,6 +75,8 @@ pub struct ModelRun {
     pub warmup_s: Option<f64>,
     pub hints: Vec<HintResult>,
     pub error: Option<String>,
+    /// Set when the model was too slow here and its remaining cases were skipped.
+    pub too_slow: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -205,6 +207,7 @@ mod tests {
                 hint(None, 120.0, 0, true),
             ],
             error: None,
+            too_slow: None,
         };
         let s = run.summary();
         assert_eq!(s.answered, 2);
@@ -248,6 +251,7 @@ mod tests {
             warmup_s: None,
             hints: vec![h, plain],
             error: None,
+            too_slow: None,
         };
         let s = run.summary();
         assert_eq!(s.rewrites, 1);

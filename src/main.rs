@@ -126,20 +126,39 @@ async fn run() -> Result<()> {
                     warmup_s: None,
                     hints: Vec::new(),
                     error: Some(e.to_string()),
+                    too_slow: None,
                 });
                 continue;
             }
         };
-        for variant in variants {
+        let mut queue: std::collections::VecDeque<_> = variants.into();
+        while let Some(variant) = queue.pop_front() {
             if cancel.load(Ordering::SeqCst) {
                 break 'models;
             }
             let result = runner
-                .run_model(alias, variant, &cases, &mut downloaded)
+                .run_model(
+                    alias,
+                    std::sync::Arc::clone(&variant),
+                    &cases,
+                    &mut downloaded,
+                )
                 .await;
+            let fall_back = result.too_slow.is_some() && result.device != runner::CPU_NAME;
             run.models.push(result);
-            // Save after every model so a stopped or crashed run still leaves a report.
+            // Save before unloading: a stopped or crashed run still leaves a report.
             write_report(&out_dir, &run, &cases)?;
+            runner.unload(&variant).await;
+
+            // A GPU version that's too slow here: try the processor version instead.
+            if fall_back
+                && !args.all_variants
+                && let Some(cpu) = runner.cpu_variant(alias).await
+                && run.models.iter().all(|m| m.variant != cpu.id())
+            {
+                println!("   Trying its processor (CPU) version instead.");
+                queue.push_back(cpu);
+            }
         }
     }
     if cancel.load(Ordering::SeqCst) {

@@ -19,6 +19,11 @@ use crate::results::{Accelerators, HintResult, ModelRun};
 use crate::score;
 use crate::system;
 
+/// Start of the error recorded when a hint times out.
+const TIMED_OUT: &str = "no full answer within";
+/// A model whose warm-up answer takes longer than this is too slow to test.
+const WARMUP_LIMIT: Duration = Duration::from_secs(90);
+
 /// Longest we wait for one hint before calling it failed.
 const HINT_TIMEOUT: Duration = Duration::from_secs(240);
 #[derive(Default)]
@@ -196,11 +201,18 @@ impl Runner {
             warmup_s: None,
             hints: Vec::new(),
             error: None,
+            too_slow: None,
         };
         println!("\n== {alias} ({}, {})", run.variant, run.device);
         if let Err(e) = self.prepare(&model, &mut run, downloaded).await {
             run.error = Some(e.to_string());
             println!("   {e}");
+            return run;
+        }
+        if let Some(w) = run.warmup_s.filter(|w| *w > WARMUP_LIMIT.as_secs_f64()) {
+            let why = format!("Too slow on this computer: the warm-up answer took {w:.0} s.");
+            println!("   {why} Skipping its cases.");
+            run.too_slow = Some(why);
             return run;
         }
 
@@ -224,10 +236,20 @@ impl Runner {
                 ),
                 Some(e) => println!(" failed: {e}"),
             }
+            let timed_out = hint
+                .error
+                .as_deref()
+                .is_some_and(|e| e.starts_with(TIMED_OUT));
             run.hints.push(hint);
-        }
-        if let Err(e) = model.unload().await {
-            println!("   (couldn't unload: {e})");
+            if timed_out {
+                let why = format!(
+                    "Too slow on this computer: a hint took over {} s.",
+                    HINT_TIMEOUT.as_secs()
+                );
+                println!("   {why} Skipping its other cases.");
+                run.too_slow = Some(why);
+                break;
+            }
         }
         let s = run.summary();
         println!(
@@ -447,15 +469,38 @@ impl Runner {
         out.thinking_words = thinking.split_whitespace().count() as u64;
         out.tokens = reported.filter(|t| *t > 0).unwrap_or(pieces);
         out.error = match outcome {
-            Err(_) => Some(format!(
-                "no full answer within {} s",
-                HINT_TIMEOUT.as_secs()
-            )),
+            Err(_) => Some(format!("{TIMED_OUT} {} s", HINT_TIMEOUT.as_secs())),
             Ok(Err(e)) => Some(e.to_string()),
             Ok(Ok(())) if out.text.trim().is_empty() => Some("empty answer".into()),
             Ok(Ok(())) => None,
         };
         out
+    }
+
+    /// Unload a model. After a timeout the engine may still be stopping the
+    /// abandoned answer, so keep trying for a while.
+    pub async fn unload(&self, model: &Model) {
+        for attempt in 0..30 {
+            match model.unload().await {
+                Ok(()) => return,
+                Err(e) if attempt == 29 => println!("   (couldn't unload: {e})"),
+                Err(_) => tokio::time::sleep(Duration::from_secs(2)).await,
+            }
+        }
+    }
+
+    /// The processor (CPU) version of a model, if the catalog has one.
+    pub async fn cpu_variant(&self, alias: &str) -> Option<Arc<Model>> {
+        self.variants(alias, true)
+            .await
+            .ok()?
+            .into_iter()
+            .find(|v| {
+                v.info()
+                    .ok()
+                    .and_then(|i| i.runtime)
+                    .is_some_and(|r| matches!(r.device_type, DeviceType::CPU))
+            })
     }
 
     pub async fn remove(&self, models: &[Arc<Model>]) {
@@ -477,9 +522,11 @@ fn wants_no_think(alias: &str) -> bool {
     alias.to_lowercase().starts_with("qwen3")
 }
 
+pub const CPU_NAME: &str = "Processor (CPU)";
+
 fn device_name(d: &DeviceType) -> String {
     match d {
-        DeviceType::CPU => "Processor (CPU)",
+        DeviceType::CPU => CPU_NAME,
         DeviceType::GPU => "Graphics (GPU)",
         DeviceType::NPU => "AI chip (NPU)",
         DeviceType::Invalid => "Unknown",
